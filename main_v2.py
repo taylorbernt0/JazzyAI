@@ -66,12 +66,11 @@ def defineModel(n_vocab, sequence_length, loadTimestamp=None):
 
     return model
 
-def getNotesFromFile(file):
-    notes = []
-
+def getEventsFromFile(file):
     try:
         midi = converter.parse(file)
     except Exception as x:
+        print(x)
         return
 
     parts = instrument.partitionByInstrument(midi)
@@ -87,68 +86,75 @@ def getNotesFromFile(file):
     if piano_part is None:
         piano_part = midi.flat.notesAndRests
 
+    offset_dictionary = {}
+
     for element in piano_part:
-        if isinstance(element, note.Note):
-            notes.append(str(element.pitch) + '|' + str(float(element.quarterLength)))
-        elif isinstance(element, note.Rest):
-            notes.append(' ' + '|' + str(float(element.quarterLength)))
-        elif isinstance(element, chord.Chord):
-            notes.append('.'.join(str(n) for n in element.normalOrder) + '|' + str(float(element.quarterLength)))
+        offset = element.offset
+        if isinstance(element, (note.Note, chord.Chord)):
+            if offset not in offset_dictionary:
+                offset_dictionary[offset] = []
 
-    # Remove space at beginning
-    if notes[0] == ' ':
-        notes = notes[1:]
+            if isinstance(element, note.Note):
+                noteNames = [element.nameWithOctave]
+            else:
+                noteNames = [str(n.nameWithOctave) for n in element.pitches]
 
-    return notes
+            for noteName in noteNames:
+                offset_dictionary[offset].append(noteName + '_ON')
+                end_offset = offset + element.quarterLength
+                if end_offset not in offset_dictionary:
+                    offset_dictionary[end_offset] = []
+                offset_dictionary[end_offset].append(noteName + '_OFF')
 
-def sortByMusicalScale(notes):
-    letters = ['A','A#','B-','B','C','C#','D-','D','D#','E-','E','F','F#','G-','G','G#','A-']
-    alphabet = [' ']
+    if 0 not in offset_dictionary:
+        offset_dictionary[0] = []
 
-    for n in range(10):
-        alphabet.extend([l+str(n) for l in letters])
+    offset_dictionary = dict(sorted(offset_dictionary.items()))
 
-    return sorted(notes, key=lambda word: [alphabet.index(word.split('|')[0]) if word.split('|')[0] in alphabet else -1])
+    #for k in offset_dictionary:
+    #    print(k)
+    #    print(offset_dictionary[k])
+
+    quarter_ms = 500 # quarter note gets 500 ms
+
+    offset_keys = list(offset_dictionary.keys())
+    event_list = []
+    for i in range(len(offset_keys)):
+        k = offset_keys[i]
+        event_list.extend(offset_dictionary[k])
+        if i+1 < len(offset_keys):
+            k_next = offset_keys[i+1]
+            quarter_time = float(k_next - k)
+            ms = round(quarter_time * quarter_ms / 10) * 10
+            while ms > 1000:
+                event_list.append('TIME_SHIFT {}'.format(min(1000, ms)))
+                ms -= 1000
+            if ms > 0:
+                event_list.append('TIME_SHIFT {}'.format(ms))
+
+    return event_list
 
 def processNotes(song_files, sequence_length):
     print('Processing songs...')
-
-    allPitchNames = set()
 
     songs_network_input = []
     songs_network_output = []
 
     for file in tqdm(song_files):
-        #song_filepath = os.path.basename(file)
+        events = getEventsFromFile(file)
 
-        notes = getNotesFromFile(file)
-
-        if notes is None or len(notes) < 50:
+        if events is None or len(events) < 50:
             continue
-
-        # Add notes to note set
-        allPitchNames = allPitchNames.union(set(item for item in notes))
 
         song_network_input = []
         song_network_output = []
 
-        for i in range(0, len(notes) - sequence_length, 1):
-            song_network_input.append(notes[i:i + sequence_length])
-            song_network_output.append(notes[i + sequence_length])
+        for i in range(0, len(events) - sequence_length, 1):
+            song_network_input.append(events[i:i + sequence_length])
+            song_network_output.append(events[i + sequence_length])
 
         songs_network_input.extend(song_network_input)
         songs_network_output.extend(song_network_output)
-
-    # Sort notes
-    allPitchNames = sortByMusicalScale(allPitchNames)
-    n_vocab = len(allPitchNames)
-
-    # Get not conversion dictionaries
-    note_to_int = dict((note, number) for number, note in enumerate(allPitchNames))
-    int_to_note = dict((number, note) for number, note in enumerate(allPitchNames))
-
-    print('Vocab size:', len(allPitchNames))
-    print('Vocab-note dictionary:', note_to_int)
 
     songs_network_input = [[note_to_int[note] for note in notes] for notes in songs_network_input]
     songs_network_output = [note_to_int[notes] for notes in songs_network_output]
@@ -166,7 +172,7 @@ def processNotes(song_files, sequence_length):
 
     numpy_songs_network_output = tf.keras.utils.to_categorical(songs_network_output, num_classes=n_vocab)
 
-    return (n_vocab, note_to_int, int_to_note, numpy_songs_network_input, numpy_songs_network_output, songs_network_input[0])
+    return (numpy_songs_network_input, numpy_songs_network_output, songs_network_input[0])
 
 def getPrediction(model, int_to_note, sequence_length, seedData, filename, amountOfNotes=100, createFile=True):
     prediction_output = []
@@ -193,42 +199,63 @@ def getPrediction(model, int_to_note, sequence_length, seedData, filename, amoun
     print(prediction_output)
 
     if createFile:
-        offset = 0
-        output_notes = []
-        # create note and chord objects based on the values generated by the model
-        for pattern in prediction_output:
-            note_pattern, duration_pattern = pattern.split('|')
-            duration_pattern = float(duration_pattern)
-            # pattern is a chord
-            if ('.' in note_pattern) or note_pattern.isdigit():
-                notes_in_chord = note_pattern.split('.')
-                notes = []
-                for current_note in notes_in_chord:
-                    new_note = note.Note(int(current_note))
-                    new_note.storedInstrument = instrument.Piano()
-                    notes.append(new_note)
-                new_chord = chord.Chord(notes)
-                new_chord.offset = offset
-                new_chord.quarterLength = duration_pattern
-                output_notes.append(new_chord)
-            # pattern is a rest
-            elif note_pattern == ' ':
-                new_rest = note.Rest()
-                new_rest.offset = offset
-                new_rest.storedInstrument = instrument.Piano()
-                new_rest.quarterLength = duration_pattern
-                output_notes.append(new_rest)
-            # pattern is a note
-            else:
-                new_note = note.Note(note_pattern)
-                new_note.offset = offset
-                new_note.storedInstrument = instrument.Piano()
-                new_note.quarterLength = duration_pattern
-                output_notes.append(new_note)
-            # increase offset each iteration so that notes do not stack
-            offset += 0.5
+        event_list = prediction_output
+        quarter_ms = 500
 
-        midi_stream = stream.Stream(output_notes)
+        decoded_notes = []
+        i = 0
+        offset = 0
+        last_off_note = -1
+        while i < len(event_list):
+            event = event_list[i]
+            if event.endswith('ON'):  # note start
+                note_name = event.split('_')[0]
+                elapsed_time = 0
+                for j in range(i + 1, len(event_list), 1):
+                    if event_list[j].startswith(note_name):  # note end
+                        last_off_note = j
+                        break
+                    elif event_list[j].startswith('TIME_SHIFT'):  # add more time to note
+                        elapsed_time += float(event_list[j].split(' ')[1])
+
+                #print(note_name, elapsed_time / quarter_ms, offset / quarter_ms)
+                parsed_note = note.Note(note_name)
+                parsed_note.offset = offset / quarter_ms
+                parsed_note.quarterLength = elapsed_time / quarter_ms
+                parsed_note.storedInstrument = instrument.Piano()
+
+                decoded_notes.append(parsed_note)
+            elif event.startswith('TIME_SHIFT') and i > last_off_note:
+                duration = 0
+                time_shift_events = 0
+                for j in range(i, len(event_list), 1):
+                    if event_list[j].startswith('TIME_SHIFT'):
+                        time_shift_events += 1
+                        duration += float(event_list[j].split(' ')[1])
+                    else:
+                        break
+
+                #print('rest', duration / quarter_ms, offset / quarter_ms)
+
+                new_rest = note.Rest()
+                new_rest.offset = offset / quarter_ms
+                new_rest.storedInstrument = instrument.Piano()
+                new_rest.quarterLength = duration / quarter_ms
+                decoded_notes.append(new_rest)
+
+                offset += duration
+
+                i += time_shift_events
+
+                continue
+            elif event.startswith('TIME_SHIFT'):
+                offset += float(event_list[i].split(' ')[1])
+
+            i += 1
+
+        print('Creating file...')
+        # decoded_notes.insert(0, tempo.MetronomeMark(number=BPM))
+        midi_stream = stream.Stream(decoded_notes)
         midi_stream.write('midi', fp=filename)
         print('Midi file created as:', filename)
 
@@ -309,7 +336,7 @@ def getSongs(filepath, numberOfSongs=None, sort=True):
 def getSeedFromFile(filepath, sequence_length=None):
     print('Extracting seed from {}'.format(filepath))
     song = glob.glob(filepath)[0]
-    notes = getNotesFromFile(song)
+    notes = getEventsFromFile(song)
     return notes[:sequence_length]
 
 def getPredictionFromSave(timestamp, seed, amoundOfNotes):
@@ -342,12 +369,22 @@ def getPredictionFromSave(timestamp, seed, amoundOfNotes):
 
 songs_to_train = 1  # Number of songs to take from the dataset
 sequence_length = 25 # Number of reference notes the network uses to generate a prediction note
-epochs = 10
+epochs = 1
 batchSize = 512
 finalPredictionLength = 300 # Length of the song produced at the end of training
 
 song_files = getSongs('./midi_classical_songs', numberOfSongs=songs_to_train)
 
-n_vocab, note_to_int, int_to_note, inputs, outputs, seed = processNotes(song_files, sequence_length)
+on_notes = ['{}_ON'.format(note.pitch.Pitch(n).nameWithOctave) for n in range(128)]
+off_notes = ['{}_OFF'.format(note.pitch.Pitch(n).nameWithOctave) for n in range(128)]
+time_shifts = ['TIME_SHIFT {}'.format(x) for x in range(10,1010,10)]
+
+vocabulary = {k: v for v, k in enumerate(on_notes + off_notes + time_shifts)}
+n_vocab = len(vocabulary)
+
+note_to_int = dict((note, number) for number, note in enumerate(vocabulary))
+int_to_note = dict((number, note) for number, note in enumerate(vocabulary))
+
+inputs, outputs, seed = processNotes(song_files, sequence_length)
 model = defineModel(n_vocab, sequence_length)
 trainModel(model, inputs, outputs, epochs, batchSize, seed, sequence_length, int_to_note, finalPredictionLength, os.path.basename(song_files[0]))
