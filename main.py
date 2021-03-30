@@ -110,7 +110,7 @@ def sortByMusicalScale(notes):
 
     return sorted(notes, key=lambda word: [alphabet.index(word.split('|')[0]) if word.split('|')[0] in alphabet else -1])
 
-def processNotes(song_files):
+def processNotes(song_files, sequence_length):
     print('Processing songs...')
 
     allPitchNames = set()
@@ -249,7 +249,7 @@ class CustomCallback(tf.keras.callbacks.Callback):
             prediction = getPrediction(self.model, self.seedData, 'temp.mid', amountOfNotes=100, createFile=True)
             prediction_history.append(prediction)
 
-def trainModel(model, inputs, outputs, epochs, batchSize, seed, finalPredictionLength, song_filepath):
+def trainModel(model, inputs, outputs, epochs, batchSize, seed, sequence_length, int_to_note, finalPredictionLength, song_filepath):
     timestamp = int(time.time())
 
     if not os.path.isdir('./model_saves'):
@@ -338,17 +338,17 @@ def getPredictionFromSave(timestamp, seed, amoundOfNotes):
     print(getPrediction(model, int_to_note, sequence_length, translatedSeed, 'pickle.mid', amountOfNotes=amoundOfNotes, createFile=True))
     print(sequence_length, int_to_note)
 
-#getPredictionFromSave(1617059767, getSeedFromFile('midi_songs/ArtPepper_Anthropology_FINAL.mid'), 300)
-#exit()
+getPredictionFromSave('1617067412_small_classical_2000', getSeedFromFile('midi_classical_songs/appass_1.mid'), 300)
+exit()
 
-songs_to_train = 1  # Number of songs to take from the dataset
-sequence_length = 25 # Number of reference notes the network uses to generate a prediction note
-epochs = 1000
-batchSize = 512
-finalPredictionLength = 300 # Length of the song produced at the end of training
-
-song_files = getSongs('./midi_classical_songs', numberOfSongs=songs_to_train)
-
-n_vocab, note_to_int, int_to_note, inputs, outputs, seed = processNotes(song_files)
-model = defineModel(n_vocab, sequence_length)
-trainModel(model, inputs, outputs, epochs, batchSize, seed, finalPredictionLength, os.path.basename(song_files[0]))
+# songs_to_train = 1  # Number of songs to take from the dataset
+# sequence_length = 25 # Number of reference notes the network uses to generate a prediction note
+# epochs = 1000
+# batchSize = 512
+# finalPredictionLength = 300 # Length of the song produced at the end of training
+#
+# song_files = getSongs('./midi_classical_songs', numberOfSongs=songs_to_train)
+#
+# n_vocab, note_to_int, int_to_note, inputs, outputs, seed = processNotes(song_files, sequence_length)
+# model = defineModel(n_vocab, sequence_length)
+# trainModel(model, inputs, outputs, epochs, batchSize, seed, sequence_length, int_to_note, finalPredictionLength, os.path.basename(song_files[0]))
