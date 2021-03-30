@@ -263,16 +263,16 @@ def trainModel(model, inputs, outputs, epochs, batchSize, seed, sequence_length,
 
     checkpoint_filepath = "model_saves/" + str(timestamp) + "/weights-improvement-{epoch:02d}-{loss:.4f}-bigger.hdf5"
 
-    checkpoint = tf.keras.callbacks.ModelCheckpoint(
+    checkpoint_callback = tf.keras.callbacks.ModelCheckpoint(
         checkpoint_filepath,
         monitor='loss',
         verbose=0,
         save_best_only=True,
-        mode='min'
+        mode='min',
+        save_freq=10
     )
 
     progress_matrix_callback = CustomCallback(model, seed)
-    early_stopping_callback = tf.keras.callbacks.EarlyStopping(monitor='loss', patience=3)
 
     print('Training model...')
     history = model.fit(
@@ -281,8 +281,7 @@ def trainModel(model, inputs, outputs, epochs, batchSize, seed, sequence_length,
         epochs=epochs,
         batch_size=batchSize,
         callbacks=[
-            checkpoint,
-            early_stopping_callback
+            checkpoint_callback,
             #progress_matrix_callback
         ]
     )
@@ -338,7 +337,7 @@ def getPredictionFromSave(timestamp, seed, amoundOfNotes):
     print(getPrediction(model, int_to_note, sequence_length, translatedSeed, 'pickle.mid', amountOfNotes=amoundOfNotes, createFile=True))
     print(sequence_length, int_to_note)
 
-getPredictionFromSave('1617067412_small_classical_2000', getSeedFromFile('midi_classical_songs/appass_1.mid'), 300)
+getPredictionFromSave('1617067412_small_classical_2000', getSeedFromFile('midi_classical_songs/appass_1.mid'), 1000)
 exit()
 
 # songs_to_train = 1  # Number of songs to take from the dataset
