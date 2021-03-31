@@ -7,6 +7,7 @@ import matplotlib.pyplot as plt
 import os
 import random
 import time
+import pickle
 
 #tf.keras.backend.clear_session()
 #
@@ -84,9 +85,9 @@ def get_model(sequence_length, load_timestamp=None):
         best_save = sorted(saves)[-1]
         best_save_name = os.path.basename(best_save)
         print('Loading best model: model_saves/{0}/{1}'.format(load_timestamp, best_save_name))
-        model.load_weights('./model_saves/{0}/{1}'.format(load_timestamp, best_save_name))
+        m.load_weights('./model_saves/{0}/{1}'.format(load_timestamp, best_save_name))
 
-    return model
+    return m
 
 def get_events_from_file(file):
     try:
@@ -311,6 +312,8 @@ def train_model(model, inputs, outputs, epochs, batch_size, seed, sequence_lengt
     print('Creating model_saves/{} directory'.format(timestamp))
     os.mkdir('model_saves/{}'.format(timestamp))
 
+    pickle.dump(sequence_length, open('model_saves/{}/pickleData.p'.format(timestamp), 'wb'))
+
     checkpoint_filepath = "model_saves/" + str(timestamp) + "/weights-improvement-{epoch:02d}-{loss:.4f}-bigger.hdf5"
 
     checkpoint_callback = tf.keras.callbacks.ModelCheckpoint(
@@ -319,7 +322,7 @@ def train_model(model, inputs, outputs, epochs, batch_size, seed, sequence_lengt
         verbose=0,
         save_best_only=True,
         mode='min',
-        save_freq=10
+        save_freq=500
     )
 
     progress_matrix_callback = CustomCallback(model, sequence_length, seed)
@@ -368,6 +371,11 @@ def get_prediction_from_save(timestamp, seed, amount_of_notes):
         print('Could not find {} directory'.format(save_folder))
         return
 
+    sequence_length = pickle.load(open(save_folder + 'pickleData.p', 'rb'))
+
+    print('Successfully loaded pickled data!')
+    print('Sequence length: {}'.format(sequence_length))
+
     model = get_model(sequence_length, timestamp)
 
     print('Successfully loaded model!')
@@ -377,14 +385,14 @@ def get_prediction_from_save(timestamp, seed, amount_of_notes):
 
     print(get_prediction(model, sequence_length, translated_seed, 'pickle.mid', amount_of_notes=amount_of_notes, create_file=True))
 
-#getPredictionFromSave('1617067412_small_classical_2000', getSeedFromFile('midi_classical_songs/appass_1.mid'), 1000)
-#exit()
+# get_prediction_from_save('1617215950', get_seed_from_file('midi_classical_songs/appass_1.mid'), 1000)
+# exit()
 
 songs_to_train = 1  # Number of songs to take from the dataset
 sequence_length = 25  # Number of reference notes the network uses to generate a prediction note
 epochs = 1
 batchSize = 512
-final_prediction_length = 300  # Length of the song produced at the end of training
+final_prediction_length = 100  # Length of the song produced at the end of training
 
 song_files = get_songs('./midi_classical_songs', numberOfSongs=songs_to_train)
 
