@@ -24,69 +24,71 @@ class Vocabulary:
 
         on_notes = ['{}_ON'.format(note.pitch.Pitch(n).nameWithOctave) for n in range(128)]
         off_notes = ['{}_OFF'.format(note.pitch.Pitch(n).nameWithOctave) for n in range(128)]
-        time_shifts = ['TIME_SHIFT {}'.format(x) for x in range(10,1010,10)]
+        time_shifts = ['TIME_SHIFT {}'.format(x) for x in range(10, 1010, 10)]
 
         vocabulary = {k: v for v, k in enumerate(on_notes + off_notes + time_shifts)}
         self.size = len(vocabulary)
 
-        self.note_to_int = dict((note, number) for number, note in enumerate(vocabulary))
-        self.int_to_note = dict((number, note) for number, note in enumerate(vocabulary))
+        self.note_to_int = dict((n, e) for e, n in enumerate(vocabulary))
+        self.int_to_note = dict((e, n) for e, n in enumerate(vocabulary))
 
-    def encode_note(self, note):
-        return self.note_to_int[note]
+    def encode_note(self, n):
+        return self.note_to_int[n]
 
-    def decode_note(self, note_encoding):
-        return self.int_to_note[note_encoding]
+    def decode_note(self, e):
+        return self.int_to_note[e]
+
 
 vocab = Vocabulary()
 
-def defineModel(sequence_length, loadTimestamp=None):
+
+def get_model(sequence_length, load_timestamp=None):
     #with strategy.scope():
-    model = tf.keras.Sequential()
-    model.add(tf.keras.layers.LSTM(
+    m = tf.keras.Sequential()
+    m.add(tf.keras.layers.LSTM(
         256,
         input_shape=(sequence_length, 1),
         return_sequences=True
     ))
-    model.add(tf.keras.layers.Dropout(0.3))
-    model.add(tf.keras.layers.LSTM(512, return_sequences=True))
-    model.add(tf.keras.layers.Dropout(0.3))
-    model.add(tf.keras.layers.LSTM(256))
-    model.add(tf.keras.layers.Dense(256))
-    model.add(tf.keras.layers.Dropout(0.3))
-    model.add(tf.keras.layers.Dense(vocab.size))
-    model.add(tf.keras.layers.Activation('softmax'))
-    model.compile(loss='categorical_crossentropy', optimizer='adam')
+    m.add(tf.keras.layers.Dropout(0.3))
+    m.add(tf.keras.layers.LSTM(512, return_sequences=True))
+    m.add(tf.keras.layers.Dropout(0.3))
+    m.add(tf.keras.layers.LSTM(256))
+    m.add(tf.keras.layers.Dense(256))
+    m.add(tf.keras.layers.Dropout(0.3))
+    m.add(tf.keras.layers.Dense(vocab.size))
+    m.add(tf.keras.layers.Activation('softmax'))
+    m.compile(loss='categorical_crossentropy', optimizer='adam')
 
-    # model = tf.keras.Sequential()
-    # model.add(tf.keras.layers.LSTM(
+    # m = tf.keras.Sequential()
+    # m.add(tf.keras.layers.LSTM(
     #     512,
     #     input_shape=(sequence_length, 1),
     #     recurrent_dropout=0.3,
     #     return_sequences=True
     # ))
-    # model.add(tf.keras.layers.LSTM(512, return_sequences=True, recurrent_dropout=0.3, ))
-    # model.add(tf.keras.layers.LSTM(512))
-    # model.add(tf.keras.layers.BatchNormalization())
-    # model.add(tf.keras.layers.Dropout(0.3))
-    # model.add(tf.keras.layers.Dense(256))
-    # model.add(tf.keras.layers.Activation('relu'))
-    # model.add(tf.keras.layers.BatchNormalization())
-    # model.add(tf.keras.layers.Dropout(0.3))
-    # model.add(tf.keras.layers.Dense(n_vocab))
-    # model.add(tf.keras.layers.Activation('softmax'))
-    # model.compile(loss='categorical_crossentropy', optimizer='adam')
+    # m.add(tf.keras.layers.LSTM(512, return_sequences=True, recurrent_dropout=0.3, ))
+    # m.add(tf.keras.layers.LSTM(512))
+    # m.add(tf.keras.layers.BatchNormalization())
+    # m.add(tf.keras.layers.Dropout(0.3))
+    # m.add(tf.keras.layers.Dense(256))
+    # m.add(tf.keras.layers.Activation('relu'))
+    # m.add(tf.keras.layers.BatchNormalization())
+    # m.add(tf.keras.layers.Dropout(0.3))
+    # m.add(tf.keras.layers.Dense(n_vocab))
+    # m.add(tf.keras.layers.Activation('softmax'))
+    # m.compile(loss='categorical_crossentropy', optimizer='adam')
 
-    if loadTimestamp is not None:
-        saves = glob.glob('./model_saves/{}/*.hdf5'.format(loadTimestamp))
-        bestSave = sorted(saves)[-1]
-        bestSaveName = os.path.basename(bestSave)
-        print('Loading best model: model_saves/{0}/{1}'.format(loadTimestamp, bestSaveName))
-        model.load_weights('./model_saves/{0}/{1}'.format(loadTimestamp, bestSaveName))
+    if load_timestamp is not None:
+        saves = glob.glob('./model_saves/{}/*.hdf5'.format(load_timestamp))
+        best_save = sorted(saves)[-1]
+        best_save_name = os.path.basename(best_save)
+        print('Loading best model: model_saves/{0}/{1}'.format(load_timestamp, best_save_name))
+        model.load_weights('./model_saves/{0}/{1}'.format(load_timestamp, best_save_name))
 
     return model
 
-def getEventsFromFile(file):
+def get_events_from_file(file):
     try:
         midi = converter.parse(file)
     except Exception as x:
@@ -115,11 +117,11 @@ def getEventsFromFile(file):
                 offset_dictionary[offset] = []
 
             if isinstance(element, note.Note):
-                noteNames = [element.nameWithOctave]
+                note_names = [element.nameWithOctave]
             else:
-                noteNames = [str(n.nameWithOctave) for n in element.pitches]
+                note_names = [str(n.nameWithOctave) for n in element.pitches]
 
-            for noteName in noteNames:
+            for noteName in note_names:
                 offset_dictionary[offset].append(noteName + '_ON')
                 end_offset = offset + element.quarterLength
                 if end_offset not in offset_dictionary:
@@ -135,7 +137,7 @@ def getEventsFromFile(file):
     #    print(k)
     #    print(offset_dictionary[k])
 
-    quarter_ms = 500 # quarter note gets 500 ms
+    quarter_ms = 500  # quarter note gets 500 ms
 
     offset_keys = list(offset_dictionary.keys())
     event_list = []
@@ -154,14 +156,15 @@ def getEventsFromFile(file):
 
     return event_list
 
-def processNotes(song_files, sequence_length):
+
+def process_notes(song_files, sequence_length):
     print('Processing songs...')
 
     songs_network_input = []
     songs_network_output = []
 
     for file in tqdm(song_files):
-        events = getEventsFromFile(file)
+        events = get_events_from_file(file)
 
         if events is None or len(events) < 50:
             continue
@@ -176,8 +179,8 @@ def processNotes(song_files, sequence_length):
         songs_network_input.extend(song_network_input)
         songs_network_output.extend(song_network_output)
 
-    songs_network_input = [[vocab.encode_note(note) for note in notes] for notes in songs_network_input]
-    songs_network_output = [vocab.encode_note(note) for note in songs_network_output]
+    songs_network_input = [[vocab.encode_note(n) for n in notes] for notes in songs_network_input]
+    songs_network_output = [vocab.encode_note(n) for n in songs_network_output]
 
     n_patterns = len(songs_network_input)
     print('{} training samples generated'.format(n_patterns))
@@ -192,18 +195,19 @@ def processNotes(song_files, sequence_length):
 
     numpy_songs_network_output = tf.keras.utils.to_categorical(songs_network_output, num_classes=vocab.size)
 
-    return (numpy_songs_network_input, numpy_songs_network_output, songs_network_input[0])
+    return numpy_songs_network_input, numpy_songs_network_output, songs_network_input[0]
 
-def getPrediction(model, sequence_length, seedData, filename, amountOfNotes=100, createFile=True):
+
+def get_prediction(model, sequence_length, seed_data, filename, amount_of_notes=100, create_file=True):
     prediction_output = []
 
-    pattern = seedData
+    pattern = seed_data
 
     if len(pattern) > sequence_length:
         pattern = pattern[:sequence_length]
 
-    print('Generating {0} notes from {1}'.format(amountOfNotes, [vocab.decode_note(n) for n in pattern]))
-    for note_index in tqdm(range(amountOfNotes)):
+    print('Generating {0} notes from {1}'.format(amount_of_notes, [vocab.decode_note(n) for n in pattern]))
+    for _ in tqdm(range(amount_of_notes)):
         prediction_input = np.reshape(pattern, (1, sequence_length, 1))
         prediction_input = prediction_input / float(vocab.size)
 
@@ -217,7 +221,7 @@ def getPrediction(model, sequence_length, seedData, filename, amountOfNotes=100,
 
     print(prediction_output)
 
-    if createFile:
+    if create_file:
         event_list = prediction_output
         quarter_ms = 500
 
@@ -285,18 +289,19 @@ prediction_history = []
 
 
 class CustomCallback(tf.keras.callbacks.Callback):
-    def __init__(self, model, sequence_length, seedData):
+    def __init__(self, model, sequence_length, seed_data):
         #super().__init__()
         self.model = model
         self.sequence_length = sequence_length
-        self.seedData = seedData
+        self.seedData = seed_data
 
     def on_epoch_end(self, epoch, logs=None):
         if epoch % 5 == 0:
-            prediction = getPrediction(self.model, self.sequence_length, self.seedData, 'temp.mid', amountOfNotes=100, createFile=True)
+            prediction = get_prediction(self.model, self.sequence_length, self.seedData, 'temp.mid', amount_of_notes=100, create_file=True)
             prediction_history.append(prediction)
 
-def trainModel(model, inputs, outputs, epochs, batchSize, seed, sequence_length, finalPredictionLength, song_filepath):
+
+def train_model(model, inputs, outputs, epochs, batch_size, seed, sequence_length, final_prediction_length, song_filepath):
     timestamp = int(time.time())
 
     if not os.path.isdir('./model_saves'):
@@ -324,14 +329,14 @@ def trainModel(model, inputs, outputs, epochs, batchSize, seed, sequence_length,
         inputs,
         outputs,
         epochs=epochs,
-        batch_size=batchSize,
+        batch_size=batch_size,
         callbacks=[
             checkpoint_callback,
             #progress_matrix_callback
         ]
     )
 
-    print(getPrediction(model, sequence_length, seed, song_filepath, amountOfNotes=finalPredictionLength, createFile=True))
+    print(get_prediction(model, sequence_length, seed, song_filepath, amount_of_notes=final_prediction_length, create_file=True))
 
     #plt.imshow(prediction_history)
     #plt.colorbar()
@@ -344,45 +349,45 @@ def trainModel(model, inputs, outputs, epochs, batchSize, seed, sequence_length,
     plt.legend(['train', 'test'], loc='upper left')
     plt.show()
 
-def getSongs(filepath, numberOfSongs=None, sort=True):
+def get_songs(filepath, numberOfSongs=None, sort=True):
     songs = glob.glob("{0}/*.mid".format(filepath))
     if sort:
         return sorted(songs)[:numberOfSongs]
 
     return songs[:numberOfSongs]
 
-def getSeedFromFile(filepath, sequence_length=None):
+def get_seed_from_file(filepath, sequence_length=None):
     print('Extracting seed from {}'.format(filepath))
     song = glob.glob(filepath)[0]
-    notes = getEventsFromFile(song)
+    notes = get_events_from_file(song)
     return notes[:sequence_length]
 
-def getPredictionFromSave(timestamp, seed, amoundOfNotes):
-    saveFolder = './model_saves/{}/'.format(timestamp)
-    if not os.path.isdir(saveFolder):
-        print('Could not find {} directory'.format(saveFolder))
+def get_prediction_from_save(timestamp, seed, amount_of_notes):
+    save_folder = './model_saves/{}/'.format(timestamp)
+    if not os.path.isdir(save_folder):
+        print('Could not find {} directory'.format(save_folder))
         return
 
-    model = defineModel(vocab.size, sequence_length, timestamp)
+    model = get_model(sequence_length, timestamp)
 
     print('Successfully loaded model!')
 
     seed = seed[:sequence_length]
-    translatedSeed = [vocab.encode_note(note) for note in seed]
+    translated_seed = [vocab.encode_note(note) for note in seed]
 
-    print(getPrediction(model, sequence_length, translatedSeed, 'pickle.mid', amountOfNotes=amoundOfNotes, createFile=True))
+    print(get_prediction(model, sequence_length, translated_seed, 'pickle.mid', amount_of_notes=amount_of_notes, create_file=True))
 
 #getPredictionFromSave('1617067412_small_classical_2000', getSeedFromFile('midi_classical_songs/appass_1.mid'), 1000)
 #exit()
 
 songs_to_train = 1  # Number of songs to take from the dataset
-sequence_length = 25 # Number of reference notes the network uses to generate a prediction note
+sequence_length = 25  # Number of reference notes the network uses to generate a prediction note
 epochs = 1
 batchSize = 512
-finalPredictionLength = 300 # Length of the song produced at the end of training
+final_prediction_length = 300  # Length of the song produced at the end of training
 
-song_files = getSongs('./midi_classical_songs', numberOfSongs=songs_to_train)
+song_files = get_songs('./midi_classical_songs', numberOfSongs=songs_to_train)
 
-inputs, outputs, seed = processNotes(song_files, sequence_length)
-model = defineModel(sequence_length)
-trainModel(model, inputs, outputs, epochs, batchSize, seed, sequence_length, finalPredictionLength, os.path.basename(song_files[0]))
+inputs, outputs, seed = process_notes(song_files, sequence_length)
+model = get_model(sequence_length)
+train_model(model, inputs, outputs, epochs, batchSize, seed, sequence_length, final_prediction_length, os.path.basename(song_files[0]))
