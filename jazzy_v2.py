@@ -20,6 +20,16 @@ import pickle
 #
 #strategy = tf.distribute.experimental.TPUStrategy(resolver)
 
+on_notes = ['{}_ON'.format(note.pitch.Pitch(n).nameWithOctave) for n in range(128)]
+off_notes = ['{}_OFF'.format(note.pitch.Pitch(n).nameWithOctave) for n in range(128)]
+time_shifts = ['TIME_SHIFT {}'.format(x) for x in range(10,1010,10)]
+
+vocabulary = {k: v for v, k in enumerate(on_notes + off_notes + time_shifts)}
+n_vocab = len(vocabulary)
+
+note_to_int = dict((note, number) for number, note in enumerate(vocabulary))
+int_to_note = dict((number, note) for number, note in enumerate(vocabulary))
+
 def defineModel(n_vocab, sequence_length, loadTimestamp=None):
     #with strategy.scope():
     model = tf.keras.Sequential()
@@ -174,9 +184,8 @@ def processNotes(song_files, sequence_length):
 
     return (numpy_songs_network_input, numpy_songs_network_output, songs_network_input[0])
 
-def getPrediction(model, int_to_note, sequence_length, seedData, filename, amountOfNotes=100, createFile=True):
+def getPrediction(model, sequence_length, seedData, filename, amountOfNotes=100, createFile=True):
     prediction_output = []
-    vocab_length = len(int_to_note)
 
     pattern = seedData
 
@@ -186,7 +195,7 @@ def getPrediction(model, int_to_note, sequence_length, seedData, filename, amoun
     print('Generating {0} notes from {1}'.format(amountOfNotes, [int_to_note[n] for n in pattern]))
     for note_index in tqdm(range(amountOfNotes)):
         prediction_input = np.reshape(pattern, (1, sequence_length, 1))
-        prediction_input = prediction_input / float(vocab_length)
+        prediction_input = prediction_input / float(n_vocab)
 
         # print(prediction_input)
         prediction = model.predict(prediction_input, verbose=0)
@@ -266,17 +275,18 @@ prediction_history = []
 
 
 class CustomCallback(tf.keras.callbacks.Callback):
-    def __init__(self, model, seedData):
+    def __init__(self, model, sequence_length, seedData):
         #super().__init__()
         self.model = model
+        self.sequence_length = sequence_length
         self.seedData = seedData
 
     def on_epoch_end(self, epoch, logs=None):
         if epoch % 5 == 0:
-            prediction = getPrediction(self.model, self.seedData, 'temp.mid', amountOfNotes=100, createFile=True)
+            prediction = getPrediction(self.model, self.sequence_length, self.seedData, 'temp.mid', amountOfNotes=100, createFile=True)
             prediction_history.append(prediction)
 
-def trainModel(model, inputs, outputs, epochs, batchSize, seed, sequence_length, int_to_note, finalPredictionLength, song_filepath):
+def trainModel(model, inputs, outputs, epochs, batchSize, seed, sequence_length, finalPredictionLength, song_filepath):
     timestamp = int(time.time())
 
     if not os.path.isdir('./model_saves'):
@@ -285,8 +295,6 @@ def trainModel(model, inputs, outputs, epochs, batchSize, seed, sequence_length,
 
     print('Creating model_saves/{} directory'.format(timestamp))
     os.mkdir('model_saves/{}'.format(timestamp))
-
-    pickle.dump((sequence_length, int_to_note), open('model_saves/{}/pickleData.p'.format(timestamp), 'wb'))
 
     checkpoint_filepath = "model_saves/" + str(timestamp) + "/weights-improvement-{epoch:02d}-{loss:.4f}-bigger.hdf5"
 
@@ -299,7 +307,7 @@ def trainModel(model, inputs, outputs, epochs, batchSize, seed, sequence_length,
         save_freq=10
     )
 
-    progress_matrix_callback = CustomCallback(model, seed)
+    progress_matrix_callback = CustomCallback(model, sequence_length, seed)
 
     print('Training model...')
     history = model.fit(
@@ -313,7 +321,7 @@ def trainModel(model, inputs, outputs, epochs, batchSize, seed, sequence_length,
         ]
     )
 
-    print(getPrediction(model, int_to_note, sequence_length, seed, song_filepath, amountOfNotes=finalPredictionLength, createFile=True))
+    print(getPrediction(model, sequence_length, seed, song_filepath, amountOfNotes=finalPredictionLength, createFile=True))
 
     #plt.imshow(prediction_history)
     #plt.colorbar()
@@ -345,15 +353,6 @@ def getPredictionFromSave(timestamp, seed, amoundOfNotes):
         print('Could not find {} directory'.format(saveFolder))
         return
 
-    (sequence_length, int_to_note) = pickle.load(open(saveFolder + 'pickleData.p', 'rb'))
-
-    note_to_int = {v: k for k, v in int_to_note.items()}
-    n_vocab = len(int_to_note)
-
-    print('Successfully loaded pickled data!')
-    print('Sequence length: {}'.format(sequence_length))
-    print('Vocab size: {}'.format(n_vocab))
-
     model = defineModel(n_vocab, sequence_length, timestamp)
 
     print('Successfully loaded model!')
@@ -361,7 +360,7 @@ def getPredictionFromSave(timestamp, seed, amoundOfNotes):
     seed = seed[:sequence_length]
     translatedSeed = [note_to_int[note] for note in seed]
 
-    print(getPrediction(model, int_to_note, sequence_length, translatedSeed, 'pickle.mid', amountOfNotes=amoundOfNotes, createFile=True))
+    print(getPrediction(model, sequence_length, translatedSeed, 'pickle.mid', amountOfNotes=amoundOfNotes, createFile=True))
     print(sequence_length, int_to_note)
 
 #getPredictionFromSave('1617067412_small_classical_2000', getSeedFromFile('midi_classical_songs/appass_1.mid'), 1000)
@@ -375,16 +374,6 @@ finalPredictionLength = 300 # Length of the song produced at the end of training
 
 song_files = getSongs('./midi_classical_songs', numberOfSongs=songs_to_train)
 
-on_notes = ['{}_ON'.format(note.pitch.Pitch(n).nameWithOctave) for n in range(128)]
-off_notes = ['{}_OFF'.format(note.pitch.Pitch(n).nameWithOctave) for n in range(128)]
-time_shifts = ['TIME_SHIFT {}'.format(x) for x in range(10,1010,10)]
-
-vocabulary = {k: v for v, k in enumerate(on_notes + off_notes + time_shifts)}
-n_vocab = len(vocabulary)
-
-note_to_int = dict((note, number) for number, note in enumerate(vocabulary))
-int_to_note = dict((number, note) for number, note in enumerate(vocabulary))
-
 inputs, outputs, seed = processNotes(song_files, sequence_length)
 model = defineModel(n_vocab, sequence_length)
-trainModel(model, inputs, outputs, epochs, batchSize, seed, sequence_length, int_to_note, finalPredictionLength, os.path.basename(song_files[0]))
+trainModel(model, inputs, outputs, epochs, batchSize, seed, sequence_length, finalPredictionLength, os.path.basename(song_files[0]))
