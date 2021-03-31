@@ -18,17 +18,29 @@ import time
 #
 #strategy = tf.distribute.experimental.TPUStrategy(resolver)
 
-on_notes = ['{}_ON'.format(note.pitch.Pitch(n).nameWithOctave) for n in range(128)]
-off_notes = ['{}_OFF'.format(note.pitch.Pitch(n).nameWithOctave) for n in range(128)]
-time_shifts = ['TIME_SHIFT {}'.format(x) for x in range(10,1010,10)]
+class Vocabulary:
+    def __init__(self):
+        from music21 import note
 
-vocabulary = {k: v for v, k in enumerate(on_notes + off_notes + time_shifts)}
-n_vocab = len(vocabulary)
+        on_notes = ['{}_ON'.format(note.pitch.Pitch(n).nameWithOctave) for n in range(128)]
+        off_notes = ['{}_OFF'.format(note.pitch.Pitch(n).nameWithOctave) for n in range(128)]
+        time_shifts = ['TIME_SHIFT {}'.format(x) for x in range(10,1010,10)]
 
-note_to_int = dict((note, number) for number, note in enumerate(vocabulary))
-int_to_note = dict((number, note) for number, note in enumerate(vocabulary))
+        vocabulary = {k: v for v, k in enumerate(on_notes + off_notes + time_shifts)}
+        self.size = len(vocabulary)
 
-def defineModel(n_vocab, sequence_length, loadTimestamp=None):
+        self.note_to_int = dict((note, number) for number, note in enumerate(vocabulary))
+        self.int_to_note = dict((number, note) for number, note in enumerate(vocabulary))
+
+    def encode_note(self, note):
+        return self.note_to_int[note]
+
+    def decode_note(self, note_encoding):
+        return self.int_to_note[note_encoding]
+
+vocab = Vocabulary()
+
+def defineModel(sequence_length, loadTimestamp=None):
     #with strategy.scope():
     model = tf.keras.Sequential()
     model.add(tf.keras.layers.LSTM(
@@ -42,7 +54,7 @@ def defineModel(n_vocab, sequence_length, loadTimestamp=None):
     model.add(tf.keras.layers.LSTM(256))
     model.add(tf.keras.layers.Dense(256))
     model.add(tf.keras.layers.Dropout(0.3))
-    model.add(tf.keras.layers.Dense(n_vocab))
+    model.add(tf.keras.layers.Dense(vocab.size))
     model.add(tf.keras.layers.Activation('softmax'))
     model.compile(loss='categorical_crossentropy', optimizer='adam')
 
@@ -164,8 +176,8 @@ def processNotes(song_files, sequence_length):
         songs_network_input.extend(song_network_input)
         songs_network_output.extend(song_network_output)
 
-    songs_network_input = [[note_to_int[note] for note in notes] for notes in songs_network_input]
-    songs_network_output = [note_to_int[notes] for notes in songs_network_output]
+    songs_network_input = [[vocab.encode_note(note) for note in notes] for notes in songs_network_input]
+    songs_network_output = [vocab.encode_note(note) for note in songs_network_output]
 
     n_patterns = len(songs_network_input)
     print('{} training samples generated'.format(n_patterns))
@@ -176,9 +188,9 @@ def processNotes(song_files, sequence_length):
     songs_network_input, songs_network_output = zip(*temp)
 
     numpy_songs_network_input = np.reshape(songs_network_input, (n_patterns, sequence_length, 1))
-    numpy_songs_network_input = numpy_songs_network_input / float(n_vocab)
+    numpy_songs_network_input = numpy_songs_network_input / float(vocab.size)
 
-    numpy_songs_network_output = tf.keras.utils.to_categorical(songs_network_output, num_classes=n_vocab)
+    numpy_songs_network_output = tf.keras.utils.to_categorical(songs_network_output, num_classes=vocab.size)
 
     return (numpy_songs_network_input, numpy_songs_network_output, songs_network_input[0])
 
@@ -190,15 +202,15 @@ def getPrediction(model, sequence_length, seedData, filename, amountOfNotes=100,
     if len(pattern) > sequence_length:
         pattern = pattern[:sequence_length]
 
-    print('Generating {0} notes from {1}'.format(amountOfNotes, [int_to_note[n] for n in pattern]))
+    print('Generating {0} notes from {1}'.format(amountOfNotes, [vocab.decode_note(n) for n in pattern]))
     for note_index in tqdm(range(amountOfNotes)):
         prediction_input = np.reshape(pattern, (1, sequence_length, 1))
-        prediction_input = prediction_input / float(n_vocab)
+        prediction_input = prediction_input / float(vocab.size)
 
         # print(prediction_input)
         prediction = model.predict(prediction_input, verbose=0)
         index = np.argmax(prediction)
-        result = int_to_note[index]
+        result = vocab.decode_note(index)
         prediction_output.append(result)
         pattern.append(index)
         pattern = pattern[1:len(pattern)]
@@ -351,15 +363,14 @@ def getPredictionFromSave(timestamp, seed, amoundOfNotes):
         print('Could not find {} directory'.format(saveFolder))
         return
 
-    model = defineModel(n_vocab, sequence_length, timestamp)
+    model = defineModel(vocab.size, sequence_length, timestamp)
 
     print('Successfully loaded model!')
 
     seed = seed[:sequence_length]
-    translatedSeed = [note_to_int[note] for note in seed]
+    translatedSeed = [vocab.encode_note(note) for note in seed]
 
     print(getPrediction(model, sequence_length, translatedSeed, 'pickle.mid', amountOfNotes=amoundOfNotes, createFile=True))
-    print(sequence_length, int_to_note)
 
 #getPredictionFromSave('1617067412_small_classical_2000', getSeedFromFile('midi_classical_songs/appass_1.mid'), 1000)
 #exit()
@@ -373,5 +384,5 @@ finalPredictionLength = 300 # Length of the song produced at the end of training
 song_files = getSongs('./midi_classical_songs', numberOfSongs=songs_to_train)
 
 inputs, outputs, seed = processNotes(song_files, sequence_length)
-model = defineModel(n_vocab, sequence_length)
+model = defineModel(sequence_length)
 trainModel(model, inputs, outputs, epochs, batchSize, seed, sequence_length, finalPredictionLength, os.path.basename(song_files[0]))
