@@ -353,7 +353,7 @@ def train_model(model, inputs, outputs, epochs, batch_size, seed, sequence_lengt
     plt.show()
 
 def get_songs(filepath, numberOfSongs=None, sort=True):
-    songs = glob.glob("{0}/*.mid".format(filepath))
+    songs = glob.glob("{0}*.mid".format(filepath))
     if sort:
         return sorted(songs)[:numberOfSongs]
 
@@ -388,13 +388,14 @@ def get_prediction_from_save(timestamp, seed, amount_of_notes):
 # get_prediction_from_save('1617215950', get_seed_from_file('midi_classical_songs/appass_1.mid'), 1000)
 # exit()
 
+songs_folder = './midi_classical_songs/'
 songs_to_train = 1  # Number of songs to take from the dataset
 sequence_length = 25  # Number of reference notes the network uses to generate a prediction note
 epochs = 1
 batchSize = 512
 final_prediction_length = 100  # Length of the song produced at the end of training
 
-song_files = get_songs('./midi_classical_songs', numberOfSongs=songs_to_train)
+song_files = get_songs(songs_folder, numberOfSongs=songs_to_train)
 
 inputs, outputs, seed = process_notes(song_files, sequence_length)
 model = get_model(sequence_length)
