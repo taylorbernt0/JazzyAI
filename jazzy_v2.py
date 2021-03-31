@@ -26,7 +26,7 @@ class Vocabulary:
         on_notes = ['{}_ON'.format(note.pitch.Pitch(n).nameWithOctave) for n in range(128)]
         off_notes = ['{}_OFF'.format(note.pitch.Pitch(n).nameWithOctave) for n in range(128)]
         time_shifts = ['TIME_SHIFT {}'.format(x) for x in range(10, 1010, 10)]
-        set_velocities = ['SET_VELOCITY {}'.format(x) for x in range(0, 128, 4)]
+        set_velocities = ['SET_VELOCITY {}'.format(x) for x in range(0, 132, 4)]
 
         vocabulary = {k: v for v, k in enumerate(on_notes + off_notes + time_shifts + set_velocities)}
         self.size = len(vocabulary)
