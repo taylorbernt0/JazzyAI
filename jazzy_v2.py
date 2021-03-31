@@ -26,8 +26,9 @@ class Vocabulary:
         on_notes = ['{}_ON'.format(note.pitch.Pitch(n).nameWithOctave) for n in range(128)]
         off_notes = ['{}_OFF'.format(note.pitch.Pitch(n).nameWithOctave) for n in range(128)]
         time_shifts = ['TIME_SHIFT {}'.format(x) for x in range(10, 1010, 10)]
+        set_velocities = ['SET_VELOCITY {}'.format(x) for x in range(0, 128, 4)]
 
-        vocabulary = {k: v for v, k in enumerate(on_notes + off_notes + time_shifts)}
+        vocabulary = {k: v for v, k in enumerate(on_notes + off_notes + time_shifts + set_velocities)}
         self.size = len(vocabulary)
 
         self.note_to_int = dict((n, e) for e, n in enumerate(vocabulary))
@@ -111,6 +112,8 @@ def get_events_from_file(file):
 
     offset_dictionary = {}
 
+    current_velocity = -1
+
     for element in piano_part:
         offset = element.offset
         if isinstance(element, (note.Note, chord.Chord)):
@@ -121,6 +124,11 @@ def get_events_from_file(file):
                 note_names = [element.nameWithOctave]
             else:
                 note_names = [str(n.nameWithOctave) for n in element.pitches]
+
+            velocity = round((element.volume.velocity + 1) / 4) * 4
+            if velocity != current_velocity:
+                offset_dictionary[offset].append('SET_VELOCITY {}'.format(velocity))
+                current_velocity = velocity
 
             for noteName in note_names:
                 offset_dictionary[offset].append(noteName + '_ON')
@@ -135,8 +143,8 @@ def get_events_from_file(file):
     offset_dictionary = dict(sorted(offset_dictionary.items()))
 
     #for k in offset_dictionary:
-    #    print(k)
-    #    print(offset_dictionary[k])
+    #   print(k)
+    #   print(offset_dictionary[k])
 
     quarter_ms = 500  # quarter note gets 500 ms
 
@@ -154,6 +162,8 @@ def get_events_from_file(file):
                 ms -= 1000
             if ms > 0:
                 event_list.append('TIME_SHIFT {}'.format(ms))
+
+    print(event_list)
 
     return event_list
 
@@ -230,6 +240,7 @@ def get_prediction(model, sequence_length, seed_data, filename, amount_of_notes=
         i = 0
         offset = 0
         last_off_note = -1
+        current_velocity = 0
         while i < len(event_list):
             event = event_list[i]
             if event.endswith('ON'):  # note start
@@ -247,6 +258,7 @@ def get_prediction(model, sequence_length, seed_data, filename, amount_of_notes=
                 parsed_note.offset = offset / quarter_ms
                 parsed_note.quarterLength = elapsed_time / quarter_ms
                 parsed_note.storedInstrument = instrument.Piano()
+                parsed_note.volume.velocity = current_velocity
 
                 decoded_notes.append(parsed_note)
             elif event.startswith('TIME_SHIFT') and i > last_off_note:
@@ -274,6 +286,8 @@ def get_prediction(model, sequence_length, seed_data, filename, amount_of_notes=
                 continue
             elif event.startswith('TIME_SHIFT'):
                 offset += float(event_list[i].split(' ')[1])
+            elif event.startswith('SET_VELOCITY'):
+                current_velocity = float(event_list[i].split(' ')[1])
 
             i += 1
 
