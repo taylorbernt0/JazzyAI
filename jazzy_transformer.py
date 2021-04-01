@@ -9,15 +9,20 @@ import random
 import time
 import pickle
 
-#tf.keras.backend.clear_session()
-#
-#resolver = tf.distribute.cluster_resolver.TPUClusterResolver(tpu='grpc://' + os.environ['COLAB_TPU_ADDR'])
-#tf.config.experimental_connect_to_cluster(resolver)
-## This is the TPU initialization code that has to be at the beginning.
-#tf.tpu.experimental.initialize_tpu_system(resolver)
-#print("All devices: ", tf.config.list_logical_devices('TPU'))
-#
-#strategy = tf.distribute.TPUStrategy(resolver)
+
+tf.keras.backend.clear_session()
+using_tpu = False
+try:
+    resolver = tf.distribute.cluster_resolver.TPUClusterResolver(tpu='grpc://' + os.environ['COLAB_TPU_ADDR'])
+    tf.config.experimental_connect_to_cluster(resolver)
+    # This is the TPU initialization code that has to be at the beginning.
+    tf.tpu.experimental.initialize_tpu_system(resolver)
+    print("All TPU devices: ", tf.config.list_logical_devices('TPU'))
+
+    strategy = tf.distribute.TPUStrategy(resolver)
+    using_tpu = True
+except:
+    print('No TPU found')
 
 class Vocabulary:
     def __init__(self):
@@ -43,43 +48,65 @@ class Vocabulary:
 
 vocab = Vocabulary()
 
+class TransformerBlock(tf.keras.layers.Layer):
+    def __init__(self, embed_dim, num_heads, ff_dim, rate=0.1):
+        super(TransformerBlock, self).__init__()
+        self.att = tf.keras.layers.MultiHeadAttention(num_heads=num_heads, key_dim=embed_dim)
+        self.ffn = tf.keras.Sequential(
+            [tf.keras.layers.Dense(ff_dim, activation="relu"), tf.keras.layers.Dense(embed_dim),]
+        )
+        self.layernorm1 = tf.keras.layers.LayerNormalization(epsilon=1e-6)
+        self.layernorm2 = tf.keras.layers.LayerNormalization(epsilon=1e-6)
+        self.dropout1 = tf.keras.layers.Dropout(rate)
+        self.dropout2 = tf.keras.layers.Dropout(rate)
+
+    def call(self, inputs, training):
+        attn_output = self.att(inputs, inputs)
+        attn_output = self.dropout1(attn_output, training=training)
+        out1 = self.layernorm1(inputs + attn_output)
+        ffn_output = self.ffn(out1)
+        ffn_output = self.dropout2(ffn_output, training=training)
+        return self.layernorm2(out1 + ffn_output)
+
+class TokenAndPositionEmbedding(tf.keras.layers.Layer):
+    def __init__(self, maxlen, vocab_size, embed_dim):
+        super(TokenAndPositionEmbedding, self).__init__()
+        self.token_emb = tf.keras.layers.Embedding(input_dim=vocab_size, output_dim=embed_dim)
+        self.pos_emb = tf.keras.layers.Embedding(input_dim=maxlen, output_dim=embed_dim)
+
+    def call(self, x):
+        maxlen = tf.shape(x)[-1]
+        positions = tf.range(start=0, limit=maxlen, delta=1)
+        positions = self.pos_emb(positions)
+        x = self.token_emb(x)
+        return x + positions
+
+class dummy_context_mgr():
+    def __enter__(self):
+        return None
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        return False
 
 def get_model(sequence_length, load_timestamp=None):
-    #with strategy.scope():
-    m = tf.keras.Sequential()
-    m.add(tf.keras.layers.LSTM(
-        256,
-        input_shape=(sequence_length, 1),
-        return_sequences=True
-    ))
-    m.add(tf.keras.layers.Dropout(0.3))
-    m.add(tf.keras.layers.LSTM(512, return_sequences=True))
-    m.add(tf.keras.layers.Dropout(0.3))
-    m.add(tf.keras.layers.LSTM(256))
-    m.add(tf.keras.layers.Dense(256))
-    m.add(tf.keras.layers.Dropout(0.3))
-    m.add(tf.keras.layers.Dense(vocab.size))
-    m.add(tf.keras.layers.Activation('softmax'))
-    m.compile(loss='categorical_crossentropy', optimizer='adam')
+    with strategy.scope() if using_tpu else dummy_context_mgr():
 
-    # m = tf.keras.Sequential()
-    # m.add(tf.keras.layers.LSTM(
-    #     512,
-    #     input_shape=(sequence_length, 1),
-    #     recurrent_dropout=0.3,
-    #     return_sequences=True
-    # ))
-    # m.add(tf.keras.layers.LSTM(512, return_sequences=True, recurrent_dropout=0.3, ))
-    # m.add(tf.keras.layers.LSTM(512))
-    # m.add(tf.keras.layers.BatchNormalization())
-    # m.add(tf.keras.layers.Dropout(0.3))
-    # m.add(tf.keras.layers.Dense(256))
-    # m.add(tf.keras.layers.Activation('relu'))
-    # m.add(tf.keras.layers.BatchNormalization())
-    # m.add(tf.keras.layers.Dropout(0.3))
-    # m.add(tf.keras.layers.Dense(n_vocab))
-    # m.add(tf.keras.layers.Activation('softmax'))
-    # m.compile(loss='categorical_crossentropy', optimizer='adam')
+        embed_dim = 32  # Embedding size for each token
+        num_heads = 2  # Number of attention heads
+        ff_dim = 32  # Hidden layer size in feed forward network inside transformer
+
+        inputs = tf.keras.layers.Input(shape=(sequence_length,))
+        embedding_layer = TokenAndPositionEmbedding(sequence_length, vocab.size, embed_dim)
+        x = embedding_layer(inputs)
+        transformer_block = TransformerBlock(embed_dim, num_heads, ff_dim)
+        x = transformer_block(x)
+        x = tf.keras.layers.GlobalAveragePooling1D()(x)
+        x = tf.keras.layers.Dropout(0.1)(x)
+        x = tf.keras.layers.Dense(int(round(vocab.size / 2)), activation="relu")(x)
+        x = tf.keras.layers.Dropout(0.1)(x)
+        outputs = tf.keras.layers.Dense(vocab.size, activation="softmax")(x)
+
+        m = tf.keras.Model(inputs=inputs, outputs=outputs)
+        m.compile('adam', 'categorical_crossentropy', metrics=['accuracy'])
 
     if load_timestamp is not None:
         saves = glob.glob('./model_saves/{}/*.hdf5'.format(load_timestamp))
@@ -347,8 +374,9 @@ def train_model(model, inputs, outputs, epochs, batch_size, seed, sequence_lengt
         outputs,
         epochs=epochs,
         batch_size=batch_size,
+        validation_split=0.3,
         callbacks=[
-            checkpoint_callback,
+            #checkpoint_callback,
             #progress_matrix_callback
         ]
     )
@@ -403,11 +431,11 @@ def get_prediction_from_save(timestamp, seed, amount_of_notes):
 # exit()
 
 songs_folder = './midi_classical_songs/'
-songs_to_train = 1  # Number of songs to take from the dataset
+songs_to_train = 20  # Number of songs to take from the dataset
 sequence_length = 25  # Number of reference notes the network uses to generate a prediction note
-epochs = 1
-batchSize = 512
-final_prediction_length = 100  # Length of the song produced at the end of training
+epochs = 500
+batchSize = 256
+final_prediction_length = 500  # Length of the song produced at the end of training
 
 song_files = get_songs(songs_folder, numberOfSongs=songs_to_train)
 
