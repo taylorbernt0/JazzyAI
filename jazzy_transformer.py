@@ -101,7 +101,7 @@ def get_model(sequence_length, load_timestamp=None):
         x = transformer_block(x)
         x = tf.keras.layers.GlobalAveragePooling1D()(x)
         x = tf.keras.layers.Dropout(0.1)(x)
-        x = tf.keras.layers.Dense(int(round(vocab.size / 2)), activation="relu")(x)
+        x = tf.keras.layers.Dense(20, activation="relu")(x)
         x = tf.keras.layers.Dropout(0.1)(x)
         outputs = tf.keras.layers.Dense(vocab.size, activation="softmax")(x)
 

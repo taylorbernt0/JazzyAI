@@ -9,15 +9,19 @@ import random
 import time
 import pickle
 
-#tf.keras.backend.clear_session()
-#
-#resolver = tf.distribute.cluster_resolver.TPUClusterResolver(tpu='grpc://' + os.environ['COLAB_TPU_ADDR'])
-#tf.config.experimental_connect_to_cluster(resolver)
-## This is the TPU initialization code that has to be at the beginning.
-#tf.tpu.experimental.initialize_tpu_system(resolver)
-#print("All devices: ", tf.config.list_logical_devices('TPU'))
-#
-#strategy = tf.distribute.TPUStrategy(resolver)
+tf.keras.backend.clear_session()
+using_tpu = False
+try:
+    resolver = tf.distribute.cluster_resolver.TPUClusterResolver(tpu='grpc://' + os.environ['COLAB_TPU_ADDR'])
+    tf.config.experimental_connect_to_cluster(resolver)
+    # This is the TPU initialization code that has to be at the beginning.
+    tf.tpu.experimental.initialize_tpu_system(resolver)
+    print("All TPU devices: ", tf.config.list_logical_devices('TPU'))
+
+    strategy = tf.distribute.TPUStrategy(resolver)
+    using_tpu = True
+except:
+    print('No TPU found')
 
 class Vocabulary:
     def __init__(self):
@@ -43,43 +47,48 @@ class Vocabulary:
 
 vocab = Vocabulary()
 
+class dummy_context_mgr():
+    def __enter__(self):
+        return None
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        return False
 
 def get_model(sequence_length, load_timestamp=None):
-    #with strategy.scope():
-    m = tf.keras.Sequential()
-    m.add(tf.keras.layers.LSTM(
-        256,
-        input_shape=(sequence_length, 1),
-        return_sequences=True
-    ))
-    m.add(tf.keras.layers.Dropout(0.3))
-    m.add(tf.keras.layers.LSTM(512, return_sequences=True))
-    m.add(tf.keras.layers.Dropout(0.3))
-    m.add(tf.keras.layers.LSTM(256))
-    m.add(tf.keras.layers.Dense(256))
-    m.add(tf.keras.layers.Dropout(0.3))
-    m.add(tf.keras.layers.Dense(vocab.size))
-    m.add(tf.keras.layers.Activation('softmax'))
-    m.compile(loss='categorical_crossentropy', optimizer='adam')
+    with strategy.scope() if using_tpu else dummy_context_mgr():
+        m = tf.keras.Sequential()
+        m.add(tf.keras.layers.LSTM(
+            256,
+            input_shape=(sequence_length, 1),
+            return_sequences=True
+        ))
+        m.add(tf.keras.layers.Dropout(0.3))
+        m.add(tf.keras.layers.LSTM(512, return_sequences=True))
+        m.add(tf.keras.layers.Dropout(0.3))
+        m.add(tf.keras.layers.LSTM(256))
+        m.add(tf.keras.layers.Dense(256))
+        m.add(tf.keras.layers.Dropout(0.3))
+        m.add(tf.keras.layers.Dense(vocab.size))
+        m.add(tf.keras.layers.Activation('softmax'))
+        m.compile(loss='categorical_crossentropy', optimizer='adam')
 
-    # m = tf.keras.Sequential()
-    # m.add(tf.keras.layers.LSTM(
-    #     512,
-    #     input_shape=(sequence_length, 1),
-    #     recurrent_dropout=0.3,
-    #     return_sequences=True
-    # ))
-    # m.add(tf.keras.layers.LSTM(512, return_sequences=True, recurrent_dropout=0.3, ))
-    # m.add(tf.keras.layers.LSTM(512))
-    # m.add(tf.keras.layers.BatchNormalization())
-    # m.add(tf.keras.layers.Dropout(0.3))
-    # m.add(tf.keras.layers.Dense(256))
-    # m.add(tf.keras.layers.Activation('relu'))
-    # m.add(tf.keras.layers.BatchNormalization())
-    # m.add(tf.keras.layers.Dropout(0.3))
-    # m.add(tf.keras.layers.Dense(n_vocab))
-    # m.add(tf.keras.layers.Activation('softmax'))
-    # m.compile(loss='categorical_crossentropy', optimizer='adam')
+        # m = tf.keras.Sequential()
+        # m.add(tf.keras.layers.LSTM(
+        #     512,
+        #     input_shape=(sequence_length, 1),
+        #     recurrent_dropout=0.3,
+        #     return_sequences=True
+        # ))
+        # m.add(tf.keras.layers.LSTM(512, return_sequences=True, recurrent_dropout=0.3, ))
+        # m.add(tf.keras.layers.LSTM(512))
+        # m.add(tf.keras.layers.BatchNormalization())
+        # m.add(tf.keras.layers.Dropout(0.3))
+        # m.add(tf.keras.layers.Dense(256))
+        # m.add(tf.keras.layers.Activation('relu'))
+        # m.add(tf.keras.layers.BatchNormalization())
+        # m.add(tf.keras.layers.Dropout(0.3))
+        # m.add(tf.keras.layers.Dense(n_vocab))
+        # m.add(tf.keras.layers.Activation('softmax'))
+        # m.compile(loss='categorical_crossentropy', optimizer='adam')
 
     if load_timestamp is not None:
         saves = glob.glob('./model_saves/{}/*.hdf5'.format(load_timestamp))
@@ -315,6 +324,11 @@ class CustomCallback(tf.keras.callbacks.Callback):
             prediction = get_prediction(self.model, self.sequence_length, self.seedData, 'temp.mid', amount_of_notes=100, create_file=True)
             prediction_history.append(prediction)
 
+def save_dataset(inputs, outputs, sequence_length, filepath):
+    pickle.dump((inputs, outputs, sequence_length), open(filepath, 'wb'))
+
+def load_dataset(filepath):
+    return pickle.load(open(filepath, 'rb'))
 
 def train_model(model, inputs, outputs, epochs, batch_size, seed, sequence_length, final_prediction_length, song_filepath):
     timestamp = int(time.time())
@@ -341,12 +355,15 @@ def train_model(model, inputs, outputs, epochs, batch_size, seed, sequence_lengt
 
     progress_matrix_callback = CustomCallback(model, sequence_length, seed)
 
+    save_dataset(inputs, outputs, sequence_length, 'classical_dataset_'+str(sequence_length))
+
     print('Training model...')
     history = model.fit(
         inputs,
         outputs,
         epochs=epochs,
         batch_size=batch_size,
+        validation_split=0.3,
         callbacks=[
             checkpoint_callback,
             #progress_matrix_callback
@@ -402,15 +419,22 @@ def get_prediction_from_save(timestamp, seed, amount_of_notes):
 # get_prediction_from_save('1617215950', get_seed_from_file('midi_classical_songs/appass_1.mid'), 1000)
 # exit()
 
-songs_folder = './midi_classical_songs/'
-songs_to_train = 1  # Number of songs to take from the dataset
-sequence_length = 25  # Number of reference notes the network uses to generate a prediction note
+from_dataset = False
+
+if from_dataset:
+    inputs, outputs, sequence_length = load_dataset('classical_dataset')
+    seed = None
+    song_filepath = None
+else:
+    midi_song_folder = './midi_classical_songs/'
+    sequence_length = 25  # Number of reference notes the network uses to generate a prediction note
+    song_files = get_songs(midi_song_folder, numberOfSongs=41)
+    inputs, outputs, seed = process_notes(song_files, sequence_length=25)
+    song_filepath = os.path.basename(song_files[0])
+
 epochs = 1
 batchSize = 512
 final_prediction_length = 100  # Length of the song produced at the end of training
 
-song_files = get_songs(songs_folder, numberOfSongs=songs_to_train)
-
-inputs, outputs, seed = process_notes(song_files, sequence_length)
 model = get_model(sequence_length)
-train_model(model, inputs, outputs, epochs, batchSize, seed, sequence_length, final_prediction_length, os.path.basename(song_files[0]))
+train_model(model, inputs, outputs, epochs, batchSize, seed, sequence_length, final_prediction_length, song_filepath)
